@@ -76,6 +76,29 @@ func SortByRevision(list []*rspb.Release) {
 	sort.Sort(s)
 }
 
+// SortByFailed returns the list of releases with all FAILED releases at the
+// beginning, and then sorted by the release's revision number (release.Version).
+func SortByFailed(list []*rspb.Release) {
+	s := &sorter{list: list}
+
+	s.less = func(i, j int) bool {
+
+		if s.list[i].GetInfo().GetStatus().Code == rspb.Status_FAILED && s.list[j].GetInfo().GetStatus().Code != rspb.Status_FAILED {
+			return true
+		}
+
+		if s.list[j].GetInfo().GetStatus().Code == rspb.Status_FAILED && s.list[i].GetInfo().GetStatus().Code != rspb.Status_FAILED {
+			return false
+		}
+
+		vi := s.list[i].Version
+		vj := s.list[j].Version
+
+		return vi < vj
+	}
+	sort.Sort(s)
+}
+
 // SortByChartName sorts the list of releases by a
 // release's chart name in lexicographical order.
 func SortByChartName(list []*rspb.Release) {

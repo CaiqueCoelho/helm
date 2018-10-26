@@ -163,11 +163,39 @@ func (s *Storage) History(name string) ([]*rspb.Release, error) {
 	return s.Driver.Query(map[string]string{"NAME": name, "OWNER": "TILLER"})
 }
 
-// removeLeastRecent removes items from history until the length number of releases
-// does not exceed max.
+// removeLeastRecent removes items from history until the length number of total
+// releases does not exceed max.
 //
 // We allow max to be set explicitly so that calling functions can "make space"
-// for the new records they are going to write.
+// for the new records they are going to write. We also priorize the history
+// of successful (SUPERSEDED/DEPLOYED) releases over others.
+//
+// For example, let there be four releases as follow:
+//
+// REVISION	   STATUS
+// 1       	   SUPERSEDED
+// 2       	   FAILED
+// 3       	   DEPLOYED
+//
+// If the max is 3 releases, and Revision#4 is deployed and succeeds, then
+// Revision#2 (which is the oldest failed release) will be deleted:
+//
+// REVISION	   STATUS
+// 1       	   SUPERSEDED
+// 3       	   SUPERSEDED
+// 4       	   DEPLOYED
+//
+// Now should Revision#5 fail, since there are no failed releases to delete, we
+// remove Revision#1, which is the oldest release. Note that we always keep the
+// latest release, even if it failed.
+//
+// REVISION	   STATUS
+// 3       	   SUPERSEDED
+// 4       	   DEPLOYED
+// 5       	   FAILED
+//
+// This way we guarantee that we never run out of healthy releases to rollback
+// to. See https://github.com/helm/helm/issues/4349 for more information.
 func (s *Storage) removeLeastRecent(name string, max int) error {
 	if max < 0 {
 		return nil
@@ -179,10 +207,15 @@ func (s *Storage) removeLeastRecent(name string, max int) error {
 	if len(h) <= max {
 		return nil
 	}
+
+	// Number of releases to delete
 	overage := len(h) - max
 
-	// We want oldest to newest
-	relutil.SortByRevision(h)
+	// We want all failed releases at the beginning of the list to be deleted
+	// first, and then sorted by Version, so the oldest failed releases are
+	// deleted before the newest failed release and in the absence of failed
+	// releases we delete the oldest successful releases
+	relutil.SortByFailed(h)
 
 	// Delete as many as possible. In the case of API throughput limitations,
 	// multiple invocations of this function will eventually delete them all.
